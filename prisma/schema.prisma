@@ -1,0 +1,57 @@
+// Prisma schema for the post-match stat aggregation service.
+// See DECISIONS.md -> "Storage structure" for the reasoning behind this layout.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+/// One row per accepted match result. The primary key on match_id is what
+/// makes match submission idempotent.
+model Match {
+  matchId         String        @id @map("match_id")
+  durationSeconds Int           @map("duration_seconds")
+  /// SHA-256 of the canonicalised payload; lets us tell an idempotent retry
+  /// (same payload) apart from a conflicting re-use of the same match_id.
+  payloadHash     String        @map("payload_hash")
+  playerCount     Int           @map("player_count")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  players         MatchPlayer[]
+
+  @@map("matches")
+}
+
+/// Immutable per-player ledger of every accepted match. Career totals can be
+/// rebuilt from this table if the aggregate ever needs to be recomputed.
+model MatchPlayer {
+  matchId  String  @map("match_id")
+  playerId String  @map("player_id")
+  kills    Int
+  won      Boolean
+  match    Match   @relation(fields: [matchId], references: [matchId], onDelete: Cascade)
+
+  @@id([matchId, playerId])
+  @@map("match_players")
+}
+
+/// Pre-aggregated career stats, updated atomically in the same transaction
+/// that inserts the match. Reads (profiles, leaderboards) never aggregate
+/// the ledger at query time.
+model PlayerStats {
+  playerId             String @id @map("player_id")
+  totalKills           BigInt @default(0) @map("total_kills")
+  totalWins            BigInt @default(0) @map("total_wins")
+  totalPlaytimeSeconds BigInt @default(0) @map("total_playtime_seconds")
+  totalMatches         BigInt @default(0) @map("total_matches")
+
+  // Covering indexes for the leaderboard: ORDER BY <stat> DESC, player_id ASC.
+  @@index([totalKills(sort: Desc), playerId], map: "idx_player_stats_kills")
+  @@index([totalWins(sort: Desc), playerId], map: "idx_player_stats_wins")
+  @@index([totalPlaytimeSeconds(sort: Desc), playerId], map: "idx_player_stats_playtime")
+  @@map("player_stats")
+}

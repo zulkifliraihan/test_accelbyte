@@ -1,0 +1,31 @@
+services:
+  stats-service:
+    build: .
+    image: match-stats-service:local
+    init: true                    # tini as PID 1: correct signal forwarding / zombie reaping
+    ports:
+      - "3000:3000"
+    environment:
+      LOG_LEVEL: info
+      SQLITE_SYNCHRONOUS: FULL
+      WRITE_BATCH_MAX_SIZE: 200
+      WRITE_QUEUE_MAX_PENDING: 10000
+    volumes:
+      - stats-data:/data          # SQLite database survives container restarts
+    stop_grace_period: 20s        # > SHUTDOWN_TIMEOUT_MS so the write queue can drain
+    restart: unless-stopped
+
+  # Optional: `docker compose --profile monitoring up` also starts Prometheus on :9090
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: ["monitoring"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - stats-service
+
+volumes:
+  stats-data:
